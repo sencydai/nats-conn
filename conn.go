@@ -129,7 +129,7 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 	server.Conn = econn
 
 	//处理事件
-	msgChan := make(chan *SysMessage, 1000)
+	msgChan := make(chan *SysMessage, 10000)
 	server.Conn.BindRecvChan(fmt.Sprintf("%s.msg", server.Name), msgChan)
 	go func(ch chan *SysMessage) {
 		handle := func(fun MsgHandle, msg *SysMessage) {
