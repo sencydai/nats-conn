@@ -7,6 +7,7 @@ import (
 
 	json "github.com/intel-go/fastjson"
 	nats "github.com/nats-io/go-nats"
+	log "github.com/sencydai/log"
 )
 
 //SysMessage 系统消息
@@ -52,15 +53,15 @@ func (ns *NatsServer) RegResponseHandle(subject string, handle ResponseHandle) {
 }
 
 func disconnectHandler(conn *nats.Conn) {
-	fmt.Printf("conn disconnect %v ...\n", conn.Servers())
+	log.Warnf("conn disconnect %v ...", conn.Servers())
 }
 
 func reconnectHandler(conn *nats.Conn) {
-	fmt.Printf("conn reconnect %v %d ...\n", conn.Servers(), conn.Reconnects)
+	log.Infof("conn reconnect %v %d ...", conn.Servers(), conn.Reconnects)
 }
 
 func closedHandler(conn *nats.Conn) {
-	fmt.Printf("conn close %v ...\n", conn.Servers())
+	log.Infof("conn close %v ...", conn.Servers())
 }
 
 var (
@@ -83,7 +84,7 @@ func RegConnection(typeName, url string) bool {
 	econn, _ := nats.NewEncodedConn(conn, nats.JSON_ENCODER)
 	conns[typeName] = econn
 
-	fmt.Printf("RegConnection %s %s success\n", typeName, url)
+	log.Infof("RegConnection %s %s success", typeName, url)
 
 	return true
 }
@@ -134,7 +135,7 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 		handle := func(fun MsgHandle, msg *SysMessage) {
 			defer func() {
 				if err := recover(); err != nil {
-					fmt.Printf("%s handle msg %d error: %v\n", server.Name, msg.MsgID, err)
+					log.Errorf("%s handle msg %d error: %v", server.Name, msg.MsgID, err)
 				}
 			}()
 			fun(msg)
@@ -154,7 +155,7 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 		go func(msg *ResponseMessage) {
 			defer func() {
 				if err := recover(); err != nil {
-					fmt.Printf("%s handle response %s error: %v\n", server.Name, msg.Subject, err)
+					log.Errorf("%s handle response %s error: %v", server.Name, msg.Subject, err)
 				}
 			}()
 
@@ -197,7 +198,7 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 		}(msg)
 	})
 
-	fmt.Printf("register nats server %s %s success\n", typeName, server.Name)
+	log.Infof("register nats server %s %s success", typeName, server.Name)
 
 	return true
 }
@@ -206,7 +207,7 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 func Publish(typeName, serverName string, msgID int, data []byte) {
 	con, ok := GetConnection(typeName)
 	if !ok {
-		fmt.Printf("nats %s not connect\n", typeName)
+		log.Warnf("nats %s not connect", typeName)
 		return
 	}
 	msg := &SysMessage{MsgID: msgID, Data: data}
@@ -217,7 +218,7 @@ func Publish(typeName, serverName string, msgID int, data []byte) {
 func Call(typeName, serverName string, subject string, data interface{}, out interface{}) bool {
 	con, ok := GetConnection(typeName)
 	if !ok {
-		fmt.Printf("nats %s not connect\n", typeName)
+		log.Warnf("nats %s not connect", typeName)
 		return false
 	}
 	if out == nil {
@@ -227,7 +228,7 @@ func Call(typeName, serverName string, subject string, data interface{}, out int
 	if data != nil {
 		msg.Data, _ = json.Marshal(data)
 	}
-	err := con.Request(fmt.Sprintf("%s.response", serverName), msg, out, time.Second*5)
+	err := con.Request(fmt.Sprintf("%s.response", serverName), msg, out, time.Second*10)
 	return err == nil
 }
 
@@ -235,7 +236,7 @@ func Call(typeName, serverName string, subject string, data interface{}, out int
 func Cast(typeName, serverName string, subject string, data interface{}) {
 	con, ok := GetConnection(typeName)
 	if !ok {
-		fmt.Printf("nats %s not connect\n", typeName)
+		log.Warnf("nats %s not connect", typeName)
 		return
 	}
 	msg := &ResponseMessage{Subject: subject}
