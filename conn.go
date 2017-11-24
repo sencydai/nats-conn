@@ -7,7 +7,7 @@ import (
 
 	json "github.com/intel-go/fastjson"
 	nats "github.com/nats-io/go-nats"
-	log "github.com/sencydai/log"
+	. "github.com/sencydai/utils/log"
 )
 
 //SysMessage 系统消息
@@ -60,13 +60,14 @@ func reconnectHandler(conn *nats.Conn) {
 	log.Infof("conn reconnect %v %d ...", conn.Servers(), conn.Reconnects)
 }
 
-func closedHandler(conn *nats.Conn) {
-	log.Infof("conn close %v ...", conn.Servers())
-}
-
 var (
+	log   = DefaultLogger
 	conns = make(map[string]*nats.EncodedConn)
 )
+
+func SetLog(l ILogger) {
+	log = l
+}
 
 //RegConnection 新的连接
 func RegConnection(typeName, url string) bool {
@@ -75,8 +76,7 @@ func RegConnection(typeName, url string) bool {
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(time.Microsecond*500),
 		nats.DisconnectHandler(disconnectHandler),
-		nats.ReconnectHandler(reconnectHandler),
-		nats.ClosedHandler(closedHandler))
+		nats.ReconnectHandler(reconnectHandler))
 	if err != nil {
 		return false
 	}
