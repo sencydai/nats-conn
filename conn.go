@@ -19,7 +19,7 @@ type SysMessage struct {
 //ResponseMessage rpc消息
 type ResponseMessage struct {
 	Subject string
-	Data    []byte
+	Data    interface{}
 }
 
 type emptyResponseData struct {
@@ -31,7 +31,7 @@ var emptyRespData = &emptyResponseData{}
 type MsgHandle func(*SysMessage)
 
 //ResponseHandle rpc处理接口
-// func(in object) object 支持0或1个输入参数 和 0或一个返回值 参数可以为指针类型
+// func(in ...interface{}) interface{} | void
 type ResponseHandle interface{}
 
 //NatsServer NatsServer服务器
@@ -49,6 +49,11 @@ func (ns *NatsServer) RegMsgHandle(msgID int, handle MsgHandle) {
 
 //RegResponseHandle 注册rpc处理函数
 func (ns *NatsServer) RegResponseHandle(subject string, handle ResponseHandle) {
+	t := reflect.TypeOf(handle) // 获得对象类型,从而知道有多少个参数
+	if t.Kind() != reflect.Func {
+		log.Errorf("RegResponseHandle: subject(%s) reg not func type", subject)
+		return
+	}
 	ns.RespHandles[subject] = handle
 }
 
@@ -103,19 +108,6 @@ func Close() {
 	}
 }
 
-// Dissect the cb Handler's signature
-func argInfo(cb ResponseHandle) (reflect.Type, int) {
-	cbType := reflect.TypeOf(cb)
-	if cbType.Kind() != reflect.Func {
-		panic("conn: Handler needs to be a func")
-	}
-	numArgs := cbType.NumIn()
-	if numArgs == 0 {
-		return nil, numArgs
-	}
-	return cbType.In(numArgs - 1), numArgs
-}
-
 //InitNatsServer 初始化NatsServer，绑定Subscribe
 func InitNatsServer(server *NatsServer, typeName string) bool {
 	if server.Conn != nil {
@@ -161,29 +153,30 @@ func InitNatsServer(server *NatsServer, typeName string) bool {
 			if !ok {
 				return
 			}
-			argType, numArgs := argInfo(cb)
+			cbType := reflect.TypeOf(cb)
 			cbValue := reflect.ValueOf(cb)
 
 			var oV []reflect.Value
-			if numArgs == 0 {
-				oV = nil
-			} else {
-				var oPtr reflect.Value
-				if argType.Kind() != reflect.Ptr {
-					oPtr = reflect.New(argType)
-				} else {
-					oPtr = reflect.New(argType.Elem())
+			if cbType.NumIn() > 0 {
+				data := msg.Data.([]interface{})[0].([]interface{})
+				oV = make([]reflect.Value, len(data))
+				var argType reflect.Type
+				for i, v := range data {
+					argType = cbType.In(i)
+					var oPtr reflect.Value
+					if argType.Kind() != reflect.Ptr {
+						oPtr = reflect.New(argType)
+					} else {
+						oPtr = reflect.New(argType.Elem())
+					}
+					d, _ := json.Marshal(v)
+					json.Unmarshal(d, oPtr.Interface())
+					if argType.Kind() != reflect.Ptr {
+						oPtr = reflect.Indirect(oPtr)
+					}
+					oV[i] = oPtr
 				}
-
-				json.Unmarshal(msg.Data, oPtr.Interface())
-
-				if argType.Kind() != reflect.Ptr {
-					oPtr = reflect.Indirect(oPtr)
-				}
-
-				oV = []reflect.Value{oPtr}
 			}
-
 			ret := cbValue.Call(oV)
 			if reply != "" {
 				if len(ret) == 0 {
@@ -213,7 +206,7 @@ func Publish(typeName, serverName string, msgID int, data []byte) {
 }
 
 //Call 同步调用rpc
-func Call(typeName, serverName string, subject string, data interface{}, out interface{}) bool {
+func Call(typeName, serverName string, subject string, out interface{}, data ...interface{}) bool {
 	con, ok := GetConnection(typeName)
 	if !ok {
 		log.Warnf("nats %s not connect", typeName)
@@ -222,24 +215,20 @@ func Call(typeName, serverName string, subject string, data interface{}, out int
 	if out == nil {
 		out = emptyRespData
 	}
-	msg := &ResponseMessage{Subject: subject}
-	if data != nil {
-		msg.Data, _ = json.Marshal(data)
+	err := con.Request(fmt.Sprintf("%s.response", serverName), &ResponseMessage{Subject: subject, Data: data}, out, time.Second*10)
+	if err != nil {
+		log.Errorf("call %s subject error: %s", subject, err.Error())
+		return false
 	}
-	err := con.Request(fmt.Sprintf("%s.response", serverName), msg, out, time.Second*10)
-	return err == nil
+	return true
 }
 
 //Cast 异步调用rpc
-func Cast(typeName, serverName string, subject string, data interface{}) {
+func Cast(typeName, serverName string, subject string, data ...interface{}) {
 	con, ok := GetConnection(typeName)
 	if !ok {
 		log.Warnf("nats %s not connect", typeName)
 		return
 	}
-	msg := &ResponseMessage{Subject: subject}
-	if data != nil {
-		msg.Data, _ = json.Marshal(data)
-	}
-	con.Publish(fmt.Sprintf("%s.response", serverName), msg)
+	con.Publish(fmt.Sprintf("%s.response", serverName), &ResponseMessage{Subject: subject, Data: data})
 }
